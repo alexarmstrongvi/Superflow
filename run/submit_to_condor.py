@@ -3,13 +3,14 @@
 ================================================================================
 Launch jobs to the condor batch system
 Examples
-    python submit_to_condor.py path/to/files/*txt -t ./tar_this/ -e superflow_exec -o outputs/
+    python submit_to_condor.py path/to/files/*/*txt -t ./tar_this_dir/ -e superflow_exec -o outputs/go/here/
+    python submit_to_condor.py path/to/files/*pattern*txt -t ./tar_that_dir/ -e grabSumw -o outputs/go/there/
 
     - If relevant environment variables are set:
     python submit_to_condor.py path/to/files/*txt
 
 Works in general for any executable that takes an input with '-i'. Any
-additional executable arguments will require adding 
+additional executable arguments will require adding a function to get_exec_arg_string
 
 Author:
     Alex Armstrong <alarmstr@cern.ch>
@@ -20,7 +21,6 @@ Author:
 import sys, os, traceback, argparse
 import time
 import subprocess
-import pdb
 
 ################################################################################
 # Globals
@@ -29,16 +29,18 @@ _include_jigsaw = False
 _testing = False
 _condor_submit_name = 'submit.condor'
 _condor_exec_name = 'run_condor.sh'
+# Lists of executables to help set executable arguments
 _superflow_executables = [
     # Alex executables
     'makeFlatNtuples',
+    'SuperflowAnaStop2L',
     # Danny executables
     'ntupler_nn',
     'ntupler_rj_stop2l',
 ]
 _grabSumw_executable = 'grabSumw'
 # Available sites for condor submissions
-_do_brick = True
+_do_brick = False
 _do_gp = True
 _do_uc = True
 _do_sdsc = False # We do not have the necessary permissions, jobs will hang
@@ -71,6 +73,8 @@ _help_split_dsids   = 'DSIDs of input samples that will have one job run per fil
 
 _help_syst          = 'Run with systematics'
 
+_help_overwrite     = 'Overwrite the tar file if it exists'
+
 _help_verbose       = 'verbose output'
 
 ################################################################################
@@ -100,7 +104,6 @@ def main ():
         create_tar(args.tar_dir, args.tar_file, things_to_tar, args.verbose)
 
     # Submit the jobs
-
     cwd = os.getcwd()
     os.chdir(args.output_dir)
     submit_jobs(args.input_files,
@@ -108,6 +111,7 @@ def main ():
                 args.executable,
                 args.tar_file,
                 args.tar_dir,
+                args.sumw,
                 args.syst,
                 args.verbose)
     os.chdir(cwd)
@@ -172,7 +176,7 @@ def create_tar(tar_dir, tar_file, things_to_tar=["./*"], verbose=False) :
     # Return to original directory in case directory was changed
     os.chdir(pwd)
 
-def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, syst, verbose = False) :
+def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, sumw_file, syst, verbose = False) :
     '''
 
     args:
@@ -181,6 +185,7 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, syst,
         exec_name (str) -
         tar_file (str) - path to tarred file for submitting with job
         tar_dir (str) - absolute path to directory that was tarred in tar_file
+        sumw_file (str) - absolute path to sumw file
         syst (bool) - run exectuable with systematics
         verbose (bool) - run with verbose output
 
@@ -188,6 +193,7 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, syst,
     # Get paths relative to the tar directory for running on job site
     tar_name = os.path.basename(tar_file)
     tar_dir_base = os.path.basename(tar_dir)
+    sumw_rel_path = os.path.relpath(sumw_file, os.path.dirname(tar_dir))
 
     # Build condor file header
     condor_file_str = build_condor_file_header(_condor_exec_name, tar_file, syst)
@@ -197,10 +203,10 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, syst,
         rel_file_path = os.path.relpath(f, os.path.dirname(tar_dir))
         if any(dsid in f for dsid in dsids_to_split):
             condor_file_str += build_condor_file_split_queues(
-                f, exec_name, tar_dir_base, syst)
+                f, exec_name, tar_dir_base, sumw_rel_path, syst)
         else:
             condor_file_str += build_condor_file_queues(
-                rel_file_path, exec_name, tar_dir_base, syst)
+                rel_file_path, exec_name, tar_dir_base, sumw_rel_path, syst)
 
     # Write condor submit file
     with open(_condor_submit_name, 'w') as ofile:
@@ -214,7 +220,6 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, syst,
         ofile.write(condor_exec_str)
 
     # Submit condor jobs
-    print "\nSubmitting Condor Jobs!\n"
     cmd = 'condor_submit %s' % _condor_submit_name
     subprocess.call(cmd, shell = True)
 
@@ -244,12 +249,13 @@ def build_condor_file_header(exec_name, tar_file, syst):
 
     return header_str
 
-def build_condor_file_split_queues(ifile_path, exec_name, tar_dir, syst):
+def build_condor_file_split_queues(ifile_path, exec_name, tar_dir, sumw_file, syst):
     '''
     args:
         ifile_path (str) - path to input file
         exec_name (str) - name of executable
         tar_dir (str) - name of tarred directory
+        sumw_file (str) - path to sumw file relative to tarred directory
         syst (bool) - run exectuable with systematics
     '''
     queue_str = ''
@@ -264,7 +270,7 @@ def build_condor_file_split_queues(ifile_path, exec_name, tar_dir, syst):
     log_base = os.path.basename(ifile_path).replace('.txt','')
 
     for idx, link in enumerate(xrootd_links):
-        exec_args = get_exec_arg_string(exec_name, suffix=idx)
+        exec_args = get_exec_arg_string(exec_name, syst=syst, sumw_file=sumw_file, suffix=idx)
         # Positional arguments for condor executable
         # Order is important. See "build_condor_executable" for expected order
         # They get imported as an environment variable
@@ -280,19 +286,19 @@ def build_condor_file_split_queues(ifile_path, exec_name, tar_dir, syst):
 
     return queue_str
 
-def build_condor_file_queues(ifile_path, exec_name, tar_dir, syst):
+def build_condor_file_queues(ifile_path, exec_name, tar_dir, sumw_file, syst):
     '''
     args:
         ifile_path (str) - path to input file relative to tarred directory
         exec_name (str) - name of executable
         tar_dir (str) - name of tarred directory
+        sumw_file (str) - path to sumw file relative to tarred directory
         syst (bool) - run exectuable with systematics
     '''
     queue_str = ''
 
     log_base = os.path.basename(ifile_path).replace('.txt','')
-    exec_args = get_exec_arg_string(exec_name)
-
+    exec_args = get_exec_arg_string(exec_name, syst=syst, sumw_file=sumw_file)
     # Positional arguments for condor executable
     # Order is important. See "build_condor_executable" for expected order
     # They get imported as an environment variable
@@ -428,21 +434,18 @@ def sflow_exec_arg_string(syst=False, sumw_file='', suffix=''):
     '''
     '''
     sflow_args = ''
-
     if _testing:
+        print "INFO :: Running in TEST MODE. Only running on 1000 Events!"
         sflow_args += ' -n 1000 '
 
     # Systematics
-    sys_string = '-c'
-    if syst :
-        sys_string = '-a'
-    sflow_args = ' %s ' % sys_string
+    sflow_args += ' -a ' if syst else ' -c '
 
     # Sum of weights for multi-period processing
     if sumw_file :
         sflow_args += ' --sumw %s ' % sumw_file
 
-    if suffix:
+    if suffix != '': #0 is an acceptable suffix
         sflow_args += ' --suffix %s ' % suffix
 
     return sflow_args
@@ -483,7 +486,7 @@ def check_inputs(args):
     if not args.input_files:
         print "ERROR :: No input files were provied"
 
-    # Check that either txt files or root files were provided
+    # Check that txt files were provided
     if not all(f.endswith(".txt") for f in args.input_files):
         print "ERROR :: Some input files were not an expected format (*.txt)"
         sys.exit()
@@ -505,11 +508,17 @@ def check_inputs(args):
     file_indices = range(len(args.input_files))
     for idx in random.sample(file_indices, n_files_to_check):
         with open(args.input_files[idx], 'r') as f:
-            first_file = f.readline().strip()
-            if not file_name_has_xrootd_prefix(first_file):
+            first_line = f.readline().strip()
+            if skip_txt_line(first_line): continue
+            if not file_name_has_xrootd_prefix(first_line):
                 print "ERROR :: A file was found without proper xrootd",
                 print "storage prefixes: %s" % args.input_files[idx] 
                 sys.exit()
+
+    # Check that directory to be tarred exists
+    if not os.path.isdir(args.tar_dir):
+        print "ERROR :: Cannot locate directory to be tarred: %s" % args.tar_dir
+        sys.exit()
 
     # Check that directory for storing tar file exists
     if '/' in args.tar_file: # check only if tar_file is a path
@@ -519,11 +528,15 @@ def check_inputs(args):
             print '(attempted dir = %s)' % tar_file_dir
             sys.exit()
 
+    # Check if a tar file name was provided
+    if args.tar_file.startswith("$"):
+        print "ERROR :: No tar file name provided"
+
     # Check if tar file exists.
     # If so, check with user if they want to use it or overwite it.
     # If the user wants to overwrite an old file or no old file exists, then
     # create the new tar file.
-    if os.path.exists(args.tar_file):
+    if os.path.exists(args.tar_file) and not args.overwrite:
         usr_msg =  "Tar file already exists: %s\n" % args.tar_file
         usr_msg += "Would you like to [U]se or [O]verwrite it? [U/O] "
         user_op = raw_input(usr_msg)
@@ -581,6 +594,9 @@ def get_args():
     parser.add_argument('--syst',
                         action='store_true',
                         help=_help_syst)
+    parser.add_argument('--overwrite',
+                        action='store_true',
+                        help=_help_overwrite)
     parser.add_argument('-v', '--verbose',
                         action='store_true',
                         help=_help_verbose)
