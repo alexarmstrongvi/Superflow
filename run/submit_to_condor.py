@@ -10,7 +10,7 @@ Examples
     python submit_to_condor.py path/to/files/*txt
 
     - To run a job for each entry in a text file
-    python submit_to_condor.py path/to/files/*txt --split-dsids 123456 --split-dsids 987654 *pattern1*
+    python submit_to_condor.py path/to/files/*txt --split-dsids 123456 --split-dsids 987654 mc16a *pattern1* --split-dsids 132435 data16
 
 Works in general for any executable that takes an input with '-i'. Any
 additional executable arguments will require adding a function to get_exec_arg_string
@@ -29,7 +29,7 @@ import re
 ################################################################################
 # Globals
 ################################################################################
-_include_jigsaw = False
+_include_jigsaw = True
 _testing = False
 _condor_submit_name = 'submit.condor'
 _condor_exec_name = 'run_condor.sh'
@@ -47,7 +47,7 @@ _grabSumw_executable = 'grabSumw'
 _do_brick = False
 _do_gp = True
 _do_uc = True
-_do_sdsc = False # We do not have the necessary permissions, jobs will hang
+_do_sdsc = True # We do not have the necessary permissions, jobs will hang
 
 # User Argument defaults and help information
 _help_input_files   = 'Input txt files containing xrootd links'
@@ -73,10 +73,11 @@ _help_output_dir    = 'Directory for storing job output \
                        [default: %s]' % _df_output_dir
 
 _df_split_dsids     = [] 
-_help_split_dsids   = ('DSIDs of input samples that will have one job run per file in the sample. '
+_help_split_dsids   = ('DSIDs and campaign/year of input samples that will have one job run per file in the sample. '
                       +'Use option multiple times to split multiple dsids. '
-                      +'User inputs after dsid are treated as regex patterns for filtering which files to submit. '
+                      +'User inputs after dsid and campaign/year are treated as regex patterns for filtering which files to submit. '
                       +'All regex patterns are ORd. '
+                      +'All campaigns/years are submitted if none are provided.'
                       +'All files are submitted if no patterns are provided.')
 
 _help_syst          = 'Run with systematics'
@@ -187,7 +188,7 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, sumw_
 
     args:
         input_files (list(str)) - xrootd links or paths to text files with links for sample
-        dsids_to_split (list(list(dsid_str, regex_patterns))) - DSIDs of sample to be split into files before submitting
+        dsids_to_split (list(list(dsid_str, campaign/year, regex_patterns))) - DSIDs of sample to be split into files before submitting
         exec_name (str) - name of executable to run in job
         tar_file (str) - path to tarred file for submitting with job
         tar_dir (str) - absolute path to directory that was tarred in tar_file
@@ -210,9 +211,23 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, sumw_
             file_name = os.path.relpath(f, os.path.dirname(tar_dir))
         elif file_name_has_xrootd_prefix(f): 
             file_name = f
-            
-        if f.endswith(".txt") and any(dsid[0] in f for dsid in dsids_to_split):
-            patterns = next(dsid[1:] for dsid in dsids_to_split if dsid[0] in f) 
+        
+        # Determine if sample is to be split for submission
+        run_split = True
+        if not f.endswith(".txt"): 
+            run_split = False
+        else:
+            split_ops = [x for x in dsids_to_split if x[0] in f]
+            if len(split_ops) == 0:
+                run_split = False
+            elif len(split_ops) == 1:
+                split_op = split_ops[0]
+            elif len(split_ops) >= 2:
+                split_op = [x for x in split_ops if x[1] in f]
+        
+        # Build condor file body
+        if run_split:
+            patterns = split_op[2:]
             condor_file_str += build_condor_file_split_queues(
                 f, exec_name, tar_dir_base, sumw_rel_path, patterns, syst)
         else:
@@ -380,9 +395,16 @@ def build_condor_executable(exec_name, tar_file, jigsaw=False):
     exec_str += 'asetup AnalysisBase,21.2.55\n'
     exec_str += 'source build/x86*/setup.sh\n'
     if jigsaw:
-        exec_str += 'echo "sourcing RJ:"\n'
-        exec_str += 'ls source/RJTupler/scripts/\n'
-        exec_str += 'source ./source/RJTupler/scripts/setup_restframes.sh --batch\n'
+        exec_str += 'echo "Setting up RestFrames:"\n'
+        exec_str += 'echo "RestFrames directory structure:"\n'
+        exec_str += 'ls -ltrh source/\n'
+        exec_str += 'ls -ltrh source/RestFrames/\n'
+        exec_str += 'search_str=`grep "RESTFRAMESSYS=" source/RestFrames/setup_RestFrames.sh`\n'
+        exec_str += 'replace_str="RESTFRAMESSYS=${PWD}/source/RestFrames; export RESTFRAMESSYS"\n'
+        exec_str += 'sed -i.bak s:"${search_str}":"${replace_str}":g source/RestFrames/setup_RestFrames.sh\n'
+        exec_str += 'echo "RESTFRAMESSYS is now set by the following:"\n'
+        exec_str += 'grep "RESTFRAMESSYS=" source/RestFrames/setup_RestFrames.sh\n'
+        exec_str += 'source source/RestFrames/setup_RestFrames.sh\n'
     exec_str += 'echo "moving"\n'
     exec_str += 'popd\n'
     exec_str += 'echo "current directory structure:"\n'
@@ -444,8 +466,7 @@ def get_things_to_tar(tar_dir, filelist_dir='', sumw_file='', jigsaw=False):
 
     if jigsaw:
         things_to_tar.append('source/RestFrames/lib/')
-        things_to_tar.append('source/RestFrames/setup_RestFrames_BATCH.sh')
-        things_to_tar.append('source/RJTupler/scripts/')
+        things_to_tar.append('source/RestFrames/setup_RestFrames.sh')
 
     return things_to_tar
 
@@ -591,12 +612,26 @@ def check_inputs(args):
 
     # Check that split_dsids are formatted as expected
     if args.split_dsids:
+        acceptable_campaigns = [
+                'mc16a','mc16d','mc16e',
+                'data15','data16','data17','data18'
+                ]
+        found_dsids = set()
         for dsid_ops in args.split_dsids:
             dsid = dsid_ops[0]
+            found_dsids.add(dsid)
+            campaign = dsid_ops[1] if len(dsid_ops) > 1 else None
             if len(dsid)!=6 or not dsid.isdigit():
                 print "ERROR :: split-dsids must first be provided a DSID:", dsid
             if not any(dsid in f for f in args.input_files if f.endswith(".txt")):
                 print "WARNING :: DSID requested for splitting was not found in inputs:", dsid
+            if campaign and campaign not in acceptable_campaigns:
+                print "ERROR :: unrecognized campaign/data run:", campaign
+                print "INFO :: acceptable options are", acceptable_campaigns
+        for dsid in found_dsids:
+            all_ops = [x for x in args.split_dsids if x[0] == dsid]
+            if len(all_ops) > 1 and not all(len(x) > 1 for x in all_ops):
+                print "ERROR :: Requesting to split IDs in one campaign and all campaigns"
 
     # Check that sumw file exists if requested
     if args.sumw and not os.path.exists(args.sumw):
