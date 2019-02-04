@@ -269,6 +269,7 @@ def build_condor_file_header(exec_name, tar_file, syst):
     header_str += 'should_transfer_files = YES\n'
     header_str += 'transfer_input_files = %s\n' % tar_file
     header_str += 'use_x509userproxy = True\n'
+    header_str += 'Requirements = (HAS_CVMFS_atlas_cern_ch=?=True)\n'
     header_str += 'notification = Never\n'
     if syst:
         f.write('request_memory = 4 GB\n')
