@@ -546,6 +546,7 @@ bool Superflow::initialize_mc_weighter(TTree *tree)
     if (tree) {
         m_mcWeighter = &mcWeighter(); // use MCWeighter instance from SusyNtAna
         m_mcWeighter->setVerbose(m_dbg);
+        m_mcWeighter->setOverride(true);
     
         //m_mcWeighter->printSumwMap();
         m_mcWeighter->printSumwMapPeriod();
