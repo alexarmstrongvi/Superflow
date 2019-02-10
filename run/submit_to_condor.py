@@ -47,7 +47,7 @@ _grabSumw_executable = 'grabSumw'
 _do_brick = False
 _do_gp = True
 _do_uc = True
-_do_sdsc = True # We do not have the necessary permissions, jobs will hang
+_do_sdsc = True
 
 # User Argument defaults and help information
 _help_input_files   = 'Input txt files containing xrootd links'
@@ -270,6 +270,7 @@ def build_condor_file_header(exec_name, tar_file, syst):
     header_str += 'transfer_input_files = %s\n' % tar_file
     header_str += 'use_x509userproxy = True\n'
     header_str += 'Requirements = (HAS_CVMFS_atlas_cern_ch=?=True)\n'
+    header_str += 'when_to_transfer_output = ON_EXIT\n'
     header_str += 'notification = Never\n'
     if syst:
         f.write('request_memory = 4 GB\n')
@@ -452,6 +453,7 @@ def get_things_to_tar(tar_dir, filelist_dir='', sumw_file='', jigsaw=False):
     things_to_tar = []
     things_to_tar.append('build/*')
     things_to_tar.append('data/*')
+    things_to_tar.append('source/SusyNtuple/data/*txt') # for xsec override files
 
     if filelist_dir:
         full_path = os.path.abspath(filelist_dir)
