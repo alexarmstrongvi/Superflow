@@ -148,7 +148,9 @@ def create_tar(tar_dir, tar_file, things_to_tar=["./*"], verbose=False) :
     # Check directory structure is as expected
     paths_to_tar = [os.path.join(tar_dir_name, x) for x in things_to_tar]
     for x in paths_to_tar:
-        x_tmp = x.replace("*","")
+        x_tmp = x
+        while "*" in x_tmp:
+            x_tmp = os.path.dirname(x_tmp)
         if not os.path.exists(x_tmp):
             print "ERROR :: Requested tar item not found:", x_tmp
         elif os.path.abspath(tar_dir) not in os.path.abspath(x_tmp):
@@ -269,7 +271,8 @@ def build_condor_file_header(exec_name, tar_file, syst):
     header_str += 'should_transfer_files = YES\n'
     header_str += 'transfer_input_files = %s\n' % tar_file
     header_str += 'use_x509userproxy = True\n'
-    header_str += 'Requirements = (HAS_CVMFS_atlas_cern_ch=?=True)\n'
+    header_str += 'Requirements = (HAS_CVMFS_atlas_cern_ch=?=True) && \\ \n'
+    header_str += '               (GLIDEIN_Site != "SU-ITS")\n'
     header_str += 'when_to_transfer_output = ON_EXIT\n'
     header_str += 'notification = Never\n'
     if syst:
@@ -451,7 +454,7 @@ def get_things_to_tar(tar_dir, filelist_dir='', sumw_file='', jigsaw=False):
     exist.
     '''
     things_to_tar = []
-    things_to_tar.append('build/*')
+    things_to_tar.append('build/x86*')
     things_to_tar.append('data/*')
     things_to_tar.append('source/SusyNtuple/data/*txt') # for xsec override files
 
