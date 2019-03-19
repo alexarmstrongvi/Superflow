@@ -9,7 +9,18 @@
 // struct to hold the options
 struct SFOptions {
 
-    SFOptions(int in_argc, char** in_argv) : argc(in_argc), argv(in_argv),  ana_name(""), input(""), n_events_to_process(-1), suffix_name(""), sumw_file_name(""), run_mode(sflow::SuperflowRunMode::nominal), dbg(false) {}
+    SFOptions(int in_argc, char** in_argv) :
+        argc(in_argc),
+        argv(in_argv),
+        ana_name(""),
+        input(""),
+        n_events_to_process(-1),
+        suffix_name(""),
+        sumw_file_name(""),
+        ana_selection("baseline_DF"),
+        run_mode(sflow::SuperflowRunMode::nominal),
+        dbg(false)
+    {}
 
     int argc;
     char** argv;
@@ -20,6 +31,7 @@ struct SFOptions {
 
     std::string suffix_name;
     std::string sumw_file_name;
+    std::string ana_selection;
 
     sflow::SuperflowRunMode run_mode;
 

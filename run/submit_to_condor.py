@@ -84,6 +84,12 @@ _help_syst          = 'Run with systematics'
 
 _help_overwrite     = 'Overwrite the tar file if it exists'
 
+_help_test          = 'Run everything without submitting'
+
+_df_selection       = 'baseline_DF'
+_help_selection     = 'Region specific selection setting for SuperflowStop2L\
+                       [default: %s]' % _df_selection
+
 _help_verbose       = 'verbose output'
 
 ################################################################################
@@ -120,6 +126,7 @@ def main ():
                 args.tar_dir,
                 args.sumw,
                 args.syst,
+                args.test,
                 args.verbose)
     os.chdir(cwd)
 
@@ -185,7 +192,7 @@ def create_tar(tar_dir, tar_file, things_to_tar=["./*"], verbose=False) :
     # Return to original directory in case directory was changed
     os.chdir(pwd)
 
-def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, sumw_file, syst, verbose = False) :
+def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, sumw_file, syst, test, verbose = False) :
     '''
 
     args:
@@ -196,6 +203,7 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, sumw_
         tar_dir (str) - absolute path to directory that was tarred in tar_file
         sumw_file (str) - absolute path to sumw file
         syst (bool) - run exectuable with systematics
+        test (bool) - do not submit jobs
         verbose (bool) - run with verbose output
 
     '''
@@ -219,14 +227,21 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, sumw_
         if not f.endswith(".txt"): 
             run_split = False
         else:
+            # Get all split options for the DSID
             split_ops = [x for x in dsids_to_split if x[0] in f]
             if len(split_ops) == 0:
+                # Don't split if not DSID matches found
                 run_split = False
-            elif len(split_ops) == 1:
-                split_op = split_ops[0]
-            elif len(split_ops) >= 2:
+            elif any(len(x) > 1 for x in split_ops):
+                # If splits are for specific years/campaigns, get only that split option
                 split_op = [x for x in split_ops if x[1] in f]
-        
+                if len(split_op) == 0:
+                    # If split options were for a specific campaign other than this file, skip
+                    run_split = False
+            elif len(split_ops) == 1 and len(split_ops[0]) == 1:
+                # Otherwise splits should be for all years/campaigns, meaning only one split option
+                split_op = split_ops[0]
+
         # Build condor file body
         if run_split:
             patterns = split_op[2:]
@@ -249,7 +264,8 @@ def submit_jobs(input_files, dsids_to_split, exec_name, tar_file, tar_dir, sumw_
 
     # Submit condor jobs
     cmd = 'condor_submit %s' % _condor_submit_name
-    subprocess.call(cmd, shell = True)
+    if not test:
+        subprocess.call(cmd, shell = True)
 
 def build_condor_file_header(exec_name, tar_file, syst):
     '''
@@ -272,7 +288,11 @@ def build_condor_file_header(exec_name, tar_file, syst):
     header_str += 'transfer_input_files = %s\n' % tar_file
     header_str += 'use_x509userproxy = True\n'
     header_str += 'Requirements = (HAS_CVMFS_atlas_cern_ch=?=True) && \\ \n'
-    header_str += '               (GLIDEIN_Site != "SU-ITS")\n'
+    header_str += '               (GLIDEIN_Site != "SU-ITS") && \\ \n' # Jobs consistently fail
+    header_str += '               (GLIDEIN_Site != "UChicago") && \\ \n' # Jobs consistently fail
+    header_str += '               (GLIDEIN_Site != "Nebraska") && \\ \n' # Fails to return output files
+    #header_str += '               (GLIDEIN_Site != "IIT") && \\ \n' # Fails to return output file once
+    header_str += '               (GLIDEIN_Site != "OSG_US_ASU_DELL_M420")\n' # Fails to return output files
     header_str += 'when_to_transfer_output = ON_EXIT\n'
     header_str += 'notification = Never\n'
     if syst:
@@ -507,6 +527,9 @@ def sflow_exec_arg_string(syst=False, sumw_file='', suffix=''):
     if suffix != '': #0 is an acceptable suffix
         sflow_args += ' --suffix %s ' % suffix
 
+    if args.selection:
+        sflow_args += ' -s %s' % args.selection
+
     return sflow_args
 
 def skip_txt_line(line):
@@ -684,6 +707,12 @@ def get_args():
     parser.add_argument('--overwrite',
                         action='store_true',
                         help=_help_overwrite)
+    parser.add_argument('--test',
+                        action='store_true',
+                        help=_help_test)
+    parser.add_argument('--selection',
+                        help = _help_selection,
+                        default = _df_selection)
     parser.add_argument('-v', '--verbose',
                         action='store_true',
                         help=_help_verbose)

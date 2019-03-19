@@ -15,6 +15,7 @@ void help(string ana)
     cout << "    -i             : input (ROOT file, *.txt file, or dir) [REQUIRED]" << endl;
     cout << "    -n             : number of events to process [default: -1, all]" << endl;
     cout << "    -d             : set debug true [default: false]" << endl;
+    cout << "    -s             : analysis selections to use [default: baseline_DF]" << endl;
     cout << "    --suffix       : provide a string to be added as a suffix to all output files [default: \"\"]" << endl;
     cout << "    --sumw         : provide a SUMW file to provide to SusyNtuple::MCWeighter for eventweight calculation" << endl;
     cout << "    -h|--help      : print this help message" << endl;
@@ -61,6 +62,9 @@ bool read_options(SFOptions& options)
         }
         else if(strcmp(argv[i], "-d") == 0) {
             options.dbg = true;
+        }
+        else if(strcmp(argv[i], "-s") == 0) {
+            options.ana_selection = argv[++i];
         }
         else if(strcmp(argv[i], "--suffix") == 0) {
             options.suffix_name = argv[++i];
